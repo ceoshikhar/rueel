@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 )
 
@@ -55,7 +56,7 @@ var WHEEL = [25]color{
 	YELLOW,
 }
 
-func (c color) int() int {
+func (c color) worth() int {
 	switch c {
 	case YELLOW:
 		return 1
@@ -69,6 +70,23 @@ func (c color) int() int {
 		return 20
 	default:
 		return 0
+	}
+}
+
+func (c color) string() string {
+	switch c {
+	case YELLOW:
+		return "Yellow"
+	case GREEN:
+		return "Green"
+	case BLUE:
+		return "Blue"
+	case PURPLE:
+		return "Purple"
+	case RED:
+		return "Red"
+	default:
+		return ""
 	}
 }
 
@@ -116,6 +134,14 @@ func halfOnYellowStrategy(scraps int) bet {
 	return bet
 }
 
+type analytics struct {
+	// higestScraps is the maxinum number of scraps that we had at one point.
+	higestScraps int
+	// outcomeDistribution is a map where key is a color and value is the number
+	// of times that color was the outcome of a spin.
+	outcomeDistribution map[color]int
+}
+
 // rueel represents the Rust's wheel famous for gambling.
 type rueel struct {
 	// scraps is the amount of scraps available to bet.
@@ -127,18 +153,18 @@ type rueel struct {
 	// maxIteration is the iteration count when we want to stop the simulation.
 	// 0 means it will keep spinning until the scraps reach 0 or `scrapsGoal`.
 	maxIteration int
-
 	// nIteration is the last iteration that happened in simulation.
 	nIteration int
-	// mostScraps is the maxinum number of scraps that we had at one point.
-	mostScraps int
+
+	// analytics is the analytics for a given simulation.
+	analytics analytics
 }
 
 func (r *rueel) simulate() {
 
 	for {
-		if r.scraps > r.mostScraps {
-			r.mostScraps = r.scraps
+		if r.scraps > r.analytics.higestScraps {
+			r.analytics.higestScraps = r.scraps
 		}
 
 		if r.maxIteration > 0 && r.nIteration >= r.maxIteration {
@@ -155,40 +181,59 @@ func (r *rueel) simulate() {
 		}
 
 		r.scraps += scrapsWonOrLost
-
-		// fmt.Printf("Total %d \n", r.scraps)
-
-		if r.scraps <= 0 {
-			break
-		}
-
 		r.nIteration += 1
 	}
 
-	r.report()
 }
 
-func (r rueel) spin(s Strategy) (scrapsEarned int, stopIterating bool) {
+func (r rueel) spin(s Strategy) (scrapsWon int, stopIterating bool) {
 	if r.scraps <= 1 {
-		return 0, true
+		stopIterating = true
+		return scrapsWon, stopIterating
 	}
-
 	bet := s(r.scraps)
 
 	wheelSlotThatWon := rand.Intn(len(WHEEL)-0) + 0
 	colorThatWon := WHEEL[wheelSlotThatWon]
-	betMadeOnColorThatWon := bet[colorThatWon]
 
-	scrapsWon := betMadeOnColorThatWon + (betMadeOnColorThatWon * colorThatWon.int())
+	count, ok := r.analytics.outcomeDistribution[colorThatWon]
+	if !ok {
+		r.analytics.outcomeDistribution[colorThatWon] = 1
+	} else {
+		r.analytics.outcomeDistribution[colorThatWon] = count + 1
+	}
 
-	// fmt.Printf("Wagered %d Won %d ", bet.total(), scrapsWon)
+	wagerOnColorThatWon := bet[colorThatWon]
+	rewardOnColorThatWon := wagerOnColorThatWon + (wagerOnColorThatWon * colorThatWon.worth())
+	scrapsWon = rewardOnColorThatWon - (bet.total() - wagerOnColorThatWon)
 
-	return scrapsWon - (bet.total() - betMadeOnColorThatWon), false
+	// fmt.Printf("%d Bet %+v - Color %s - Wagered %d - Won/Loss %d - Total %d \n", r.nIteration, bet, colorThatWon.string(), bet.total(), scrapsWon, r.scraps+scrapsWon)
+
+	return scrapsWon, stopIterating
 }
 
-func (r rueel) report() {
-	fmt.Println("############# Rueel simulation completed ############# ")
-	fmt.Printf("%+v\n", r)
+func (r rueel) report() string {
+	sb := strings.Builder{}
+
+	sb.WriteString(fmt.Sprintf("Scraps: %d \n", r.scraps))
+	sb.WriteString(fmt.Sprintf("Total spins: %d \n", r.nIteration))
+	sb.WriteString(fmt.Sprintf("Highest scraps reached: %d \n", r.analytics.higestScraps))
+
+	od := r.analytics.outcomeDistribution
+
+	sb.WriteString("Sping outocme distribution: {")
+	colorSequence := [TOTAL_COLORS_AVAIL]color{YELLOW, GREEN, BLUE, PURPLE, RED}
+	for i, color := range colorSequence {
+		count := od[color]
+		percentage := float64(count) / float64(r.nIteration) * 100
+		sb.WriteString(fmt.Sprintf(" %s: %d (%.2f%%)", color.string(), count, percentage))
+
+		if i != TOTAL_COLORS_AVAIL-1 {
+			sb.WriteString(",")
+		}
+	}
+
+	return sb.String()
 }
 
 type rueelBuilder struct {
@@ -199,11 +244,11 @@ func newRueelBuilder() rueelBuilder {
 	return rueelBuilder{
 		rueel: rueel{
 			scraps:       1000,
-			scrapsGoal:   100000,
 			strategy:     defaultStrategy,
-			maxIteration: 100,
-			nIteration:   0,
-			mostScraps:   1000,
+			maxIteration: 10,
+			analytics: analytics{
+				outcomeDistribution: map[color]int{YELLOW: 0, GREEN: 0, BLUE: 0, PURPLE: 0, RED: 0},
+			},
 		},
 	}
 }
@@ -232,14 +277,28 @@ func (rb rueelBuilder) build() rueel {
 	return rb.rueel
 }
 
+func doSimulation() {
+	// rueel := newRueelBuilder().
+	// 	startWith(1000).
+	// 	use(halfOnYellowStrategy).
+	// 	stopIfScrapsReach(1_000_000).
+	// 	stopIfNIterationIs(100).
+	// 	build()
+
+	rueel := newRueelBuilder().
+		startWith(1000).
+		use(halfOnYellowStrategy).
+		stopIfScrapsReach(1_000_000_000_000_000_000).
+		stopIfNIterationIs(10_000_000).
+		build()
+
+	rueel.simulate()
+
+	fmt.Println(rueel.report())
+}
+
 func main() {
 	// Seed the RNG.
 	rand.Seed(time.Now().UnixNano())
-
-	rueel := newRueelBuilder().
-		startWith(4096).
-		use(halfOnYellowStrategy).
-		stopWhen(1_000_00, 1000).build()
-
-	rueel.simulate()
+	doSimulation()
 }
