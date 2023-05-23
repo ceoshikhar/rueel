@@ -218,8 +218,12 @@ func (rb rueelBuilder) use(strategy Strategy) rueelBuilder {
 	return rb
 }
 
-func (rb rueelBuilder) stopWhen(scrapsGoal int, maxIteration int) rueelBuilder {
+func (rb rueelBuilder) stopIfScrapsReach(scrapsGoal int) rueelBuilder {
 	rb.rueel.scrapsGoal = scrapsGoal
+	return rb
+}
+
+func (rb rueelBuilder) stopIfNIterationIs(maxIteration int) rueelBuilder {
 	rb.rueel.maxIteration = maxIteration
 	return rb
 }
